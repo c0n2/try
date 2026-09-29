@@ -1,0 +1,106 @@
+name: Trime AC dual-zone build
+
+on:
+  push:
+    branches: [trime-ac-dualzone-build]
+
+permissions:
+  contents: read
+
+env:
+  BUILD_ABI: arm64-v8a
+  TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout build harness
+        uses: actions/checkout@v7
+        with:
+          path: harness
+
+      - name: Checkout pinned Trime
+        uses: actions/checkout@v7
+        with:
+          repository: osfans/trime
+          ref: ${{ env.TRIME_REF }}
+          submodules: recursive
+          fetch-depth: 0
+          path: trime
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+          cache-dependency-path: trime/**/*.gradle*
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install CMake
+        run: sdkmanager --install "cmake;3.31.6"
+
+      - name: RED - add tests only
+        run: python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
+
+      - name: RED - prove tests fail before implementation
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
+            --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest \
+            > ../red.log 2>&1
+          rc=$?
+          set -e
+          tail -n 100 ../red.log
+          if [ "$rc" -eq 0 ]; then
+            echo "RED phase unexpectedly passed"
+            exit 1
+          fi
+          grep -Eq "Unresolved reference|acLeftId|AcDualZoneSide|resolveAcDualZoneSide" ../red.log
+          echo "RED_PHASE_CONFIRMED"
+
+      - name: GREEN - apply implementation
+        run: python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+
+      - name: Verify patch hygiene
+        run: |
+          cd trime
+          git diff --check
+          git status --short
+          git diff > ../trime-ac-dualzone.patch
+
+      - name: GREEN - unit tests
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
+            --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest
+
+      - name: Build patched debug APK
+        run: |
+          cd trime
+          make debug
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print
+          test -n "$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+
+      - name: Upload patched APK and patch
+        uses: actions/upload-artifact@v7
+        with:
+          name: trime-ac-dualzone-arm64
+          path: |
+            trime/app/build/outputs/apk/debug/*.apk
+            trime-ac-dualzone.patch
+            red.log
+          retention-days: 30
