@@ -46,10 +46,10 @@ jobs:
       - name: Install CMake
         run: sdkmanager --install "cmake;3.31.6"
 
-      - name: RED - add tests only
+      - name: RED - add base tests only
         run: python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
 
-      - name: RED - prove tests fail before implementation
+      - name: RED - prove base tests fail before implementation
         shell: bash
         run: |
           cd trime
@@ -57,33 +57,58 @@ jobs:
           ./gradlew :app:testDebugUnitTest \
             --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
             --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest \
-            > ../red.log 2>&1
+            > ../red-base.log 2>&1
           rc=$?
           set -e
-          tail -n 100 ../red.log
+          tail -n 100 ../red-base.log
           if [ "$rc" -eq 0 ]; then
-            echo "RED phase unexpectedly passed"
+            echo "Base RED phase unexpectedly passed"
             exit 1
           fi
-          grep -Eq "Unresolved reference|acLeftId|AcDualZoneSide|resolveAcDualZoneSide" ../red.log
-          echo "RED_PHASE_CONFIRMED"
+          grep -Eq "Unresolved reference|acLeftId|AcDualZoneSide|resolveAcDualZoneSide" ../red-base.log
+          echo "BASE_RED_PHASE_CONFIRMED"
 
-      - name: GREEN - apply implementation
+      - name: GREEN - apply base implementation
         run: python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+
+      - name: RED 4.7.1 - add daemon forwarding regression test
+        run: python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase tests
+
+      - name: RED 4.7.1 - prove daemon facade lacks explicit forwarder
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.daemon.RimeApiForwarderTest \
+            > ../red-hotfix.log 2>&1
+          rc=$?
+          set -e
+          tail -n 100 ../red-hotfix.log
+          if [ "$rc" -eq 0 ]; then
+            echo "Hotfix RED phase unexpectedly passed"
+            exit 1
+          fi
+          grep -Eq "RimeApiForwarder|Unresolved reference" ../red-hotfix.log
+          echo "HOTFIX_RED_PHASE_CONFIRMED"
+
+      - name: GREEN 4.7.1 - apply daemon forwarding fix
+        run: python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
 
       - name: Verify patch hygiene
         run: |
           cd trime
           git diff --check
           git status --short
-          git diff > ../trime-ac-dualzone.patch
+          git diff > ../trime-ac-dualzone-v4.7.1.patch
 
       - name: GREEN - unit tests
         run: |
           cd trime
           ./gradlew :app:testDebugUnitTest \
             --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
-            --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest
+            --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest \
+            --tests com.osfans.trime.daemon.RimeApiForwarderTest
 
       - name: Build patched debug APK
         run: |
@@ -99,9 +124,10 @@ jobs:
       - name: Upload patched APK and patch
         uses: actions/upload-artifact@v7
         with:
-          name: trime-ac-dualzone-arm64
+          name: trime-ac-dualzone-v4.7.1-arm64
           path: |
             trime/app/build/outputs/apk/debug/*.apk
-            trime-ac-dualzone.patch
-            red.log
+            trime-ac-dualzone-v4.7.1.patch
+            red-base.log
+            red-hotfix.log
           retention-days: 30
