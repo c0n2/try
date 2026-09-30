@@ -1,0 +1,53 @@
+name: Trime AC lexicon audit Phase 0
+
+on:
+  push:
+    branches: [trime-lexicon-audit]
+    paths:
+      - 'lexicon-audit/**'
+      - '.github/workflows/trime-lexicon-audit.yml'
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Parser regression tests
+        run: python -m unittest lexicon-audit/test_public_audit.py -v
+
+      - name: Run pinned public audit
+        env:
+          AUDIT_OUT: ${{ github.workspace }}/lexicon-audit-out
+        run: python lexicon-audit/public_audit.py
+
+      - name: Show report
+        run: cat lexicon-audit-out/PUBLIC-REPORT.md
+
+      - name: Verify outputs
+        run: |
+          test -s lexicon-audit-out/public_summary.json
+          test -s lexicon-audit-out/pairwise_public.csv
+          test -s lexicon-audit-out/words/raincandy.txt.gz
+          test -s lexicon-audit-out/words/frost_wubi.txt.gz
+          test -s lexicon-audit-out/words/wanxiang_core.txt.gz
+          test -s lexicon-audit-out/words/wanxiang_full.txt.gz
+          test -s lexicon-audit-out/words/ice_standard.txt.gz
+          grep -q 'PUBLIC_LEXICON_AUDIT=PASS' <(python lexicon-audit/public_audit.py 2>&1)
+
+      - name: Upload public audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ac-trime-public-lexicon-audit-phase0
+          path: lexicon-audit-out/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
