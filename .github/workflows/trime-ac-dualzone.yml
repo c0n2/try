@@ -95,20 +95,52 @@ jobs:
       - name: GREEN 4.7.1 - apply daemon forwarding fix
         run: python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
 
+      - name: RED v1.3 - add CtrlSpace and CtrlA regression tests
+        run: python3 harness/trime-ac-dualzone/apply_v13.py trime --phase tests
+
+      - name: RED v1.3 - prove new policy and fallback do not exist yet
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
+            > ../red-v13.log 2>&1
+          rc=$?
+          set -e
+          tail -n 120 ../red-v13.log
+          if [ "$rc" -eq 0 ]; then
+            echo "v1.3 RED phase unexpectedly passed"
+            exit 1
+          fi
+          grep -Eq "AcCtrlSpaceAction|resolveAcCtrlSpaceAction|AcSelectionRange|computeAcSelectAllFallbackRange|Unresolved reference" ../red-v13.log
+          echo "V13_RED_PHASE_CONFIRMED"
+
+      - name: GREEN v1.3 - apply native CtrlSpace and CtrlA fallback
+        run: python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
+
       - name: Verify patch hygiene
         run: |
           cd trime
           git diff --check
           git status --short
-          git diff > ../trime-ac-dualzone-v4.7.1.patch
+          git diff > ../trime-ac-dualzone-v1.3.patch
 
-      - name: GREEN - unit tests
+      - name: GREEN - focused regression tests
         run: |
           cd trime
           ./gradlew :app:testDebugUnitTest \
             --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
             --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest \
-            --tests com.osfans.trime.daemon.RimeApiForwarderTest
+            --tests com.osfans.trime.daemon.RimeApiForwarderTest \
+            --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest
+
+      - name: GREEN - full debug unit-test suite
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest
 
       - name: Build patched debug APK
         run: |
@@ -124,10 +156,11 @@ jobs:
       - name: Upload patched APK and patch
         uses: actions/upload-artifact@v7
         with:
-          name: trime-ac-dualzone-v4.7.1-arm64
+          name: trime-ac-dualzone-v1.3-arm64
           path: |
             trime/app/build/outputs/apk/debug/*.apk
-            trime-ac-dualzone-v4.7.1.patch
+            trime-ac-dualzone-v1.3.patch
             red-base.log
             red-hotfix.log
+            red-v13.log
           retention-days: 30
