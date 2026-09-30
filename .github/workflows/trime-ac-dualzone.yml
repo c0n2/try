@@ -147,6 +147,7 @@ jobs:
       - name: Verify patch hygiene
         run: |
           cd trime
+          git add -N .
           git diff --check
           git status --short
           git diff > ../trime-ac-dualzone-v1.3.1.patch
