@@ -87,8 +87,10 @@ jobs:
           Path('out/real-audit.txt').write_text('\n'.join(report) + '\n', encoding='utf-8')
           print('\n'.join(report))
           PY
-      - name: Package source metadata
+      - name: Package source metadata and licenses
         run: |
+          cp source/LICENSE.md out/RAIN_CANDY_LICENSE.md
+          cp source/LICENSE-MULAN.md out/RAIN_CANDY_LICENSE-MULAN.md
           cat > out/source-metadata.txt <<EOF
           SOURCE_REPOSITORY=https://github.com/RainCandyTech/WeaselSchemaSetup
           SOURCE_PATH=Schemas/RimeWubiTables86/wubi.dict.yaml
