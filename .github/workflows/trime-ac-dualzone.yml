@@ -144,13 +144,37 @@ jobs:
       - name: GREEN v1.3.1 - dispatch real Ctrl+A before API fallbacks
         run: python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
 
+      - name: RED v1.3.2 diag - add privacy-safe diagnostic test
+        run: python3 harness/trime-ac-dualzone/apply_v132_diag.py trime --phase tests
+
+      - name: RED v1.3.2 diag - prove diagnostic snapshot does not exist yet
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.core.AcWeChatDiagnosticTest \
+            > ../red-v132-diag.log 2>&1
+          rc=$?
+          set -e
+          tail -n 100 ../red-v132-diag.log
+          if [ "$rc" -eq 0 ]; then
+            echo "v1.3.2 diag RED phase unexpectedly passed"
+            exit 1
+          fi
+          grep -Eq "AcWeChatDiagSnapshot|Unresolved reference" ../red-v132-diag.log
+          echo "V132_DIAG_RED_PHASE_CONFIRMED"
+
+      - name: GREEN v1.3.2 diag - add WeChat CtrlA CtrlV instrumentation
+        run: python3 harness/trime-ac-dualzone/apply_v132_diag.py trime --phase impl
+
       - name: Verify patch hygiene
         run: |
           cd trime
           git add -N .
           git diff --check
           git status --short
-          git diff > ../trime-ac-dualzone-v1.3.1.patch
+          git diff > ../trime-ac-dualzone-v1.3.2-diag.patch
 
       - name: GREEN - focused regression tests
         run: |
@@ -161,7 +185,8 @@ jobs:
             --tests com.osfans.trime.daemon.RimeApiForwarderTest \
             --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
             --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
-            --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest
+            --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest \
+            --tests com.osfans.trime.ime.core.AcWeChatDiagnosticTest
 
       - name: GREEN - full debug unit-test suite
         run: |
@@ -179,15 +204,16 @@ jobs:
           find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print
           test -n "$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
 
-      - name: Upload patched APK and patch
+      - name: Upload diagnostic APK and patch
         uses: actions/upload-artifact@v7
         with:
-          name: trime-ac-dualzone-v1.3.1-arm64
+          name: trime-ac-dualzone-v1.3.2-diag-arm64
           path: |
             trime/app/build/outputs/apk/debug/*.apk
-            trime-ac-dualzone-v1.3.1.patch
+            trime-ac-dualzone-v1.3.2-diag.patch
             red-base.log
             red-hotfix.log
             red-v13.log
             red-v131.log
+            red-v132-diag.log
           retention-days: 30
