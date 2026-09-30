@@ -144,29 +144,30 @@ jobs:
       - name: GREEN v1.3.1 - dispatch real Ctrl+A before API fallbacks
         run: python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
 
-      - name: RED v1.3.2 diag - add privacy-safe diagnostic test
-        run: python3 harness/trime-ac-dualzone/apply_v132_diag.py trime --phase tests
+      - name: RED v1.4 - add AC Vim shortcut regression tests
+        run: python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
 
-      - name: RED v1.3.2 diag - prove diagnostic snapshot does not exist yet
+      - name: RED v1.4 - prove AC Vim layer does not exist yet
         shell: bash
         run: |
           cd trime
           set +e
           ./gradlew :app:testDebugUnitTest \
-            --tests com.osfans.trime.ime.core.AcWeChatDiagnosticTest \
-            > ../red-v132-diag.log 2>&1
+            --tests com.osfans.trime.ime.core.AcCtrlVimShortcutTest \
+            --tests com.osfans.trime.data.prefs.AcKeyboardHookDefaultsTest \
+            > ../red-v14.log 2>&1
           rc=$?
           set -e
-          tail -n 100 ../red-v132-diag.log
+          tail -n 120 ../red-v14.log
           if [ "$rc" -eq 0 ]; then
-            echo "v1.3.2 diag RED phase unexpectedly passed"
+            echo "v1.4 RED phase unexpectedly passed"
             exit 1
           fi
-          grep -Eq "AcWeChatDiagSnapshot|Unresolved reference" ../red-v132-diag.log
-          echo "V132_DIAG_RED_PHASE_CONFIRMED"
+          grep -Eq "AcCtrlVimAction|resolveAcCtrlVimAction|AcKeyboardHookDefaults|Unresolved reference" ../red-v14.log
+          echo "V14_RED_PHASE_CONFIRMED"
 
-      - name: GREEN v1.3.2 diag - add WeChat CtrlA CtrlV instrumentation
-        run: python3 harness/trime-ac-dualzone/apply_v132_diag.py trime --phase impl
+      - name: GREEN v1.4 - add AC Vim hardware layer
+        run: python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
 
       - name: Verify patch hygiene
         run: |
@@ -174,7 +175,7 @@ jobs:
           git add -N .
           git diff --check
           git status --short
-          git diff > ../trime-ac-dualzone-v1.3.2-diag.patch
+          git diff > ../trime-ac-dualzone-v1.4.patch
 
       - name: GREEN - focused regression tests
         run: |
@@ -186,7 +187,8 @@ jobs:
             --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
             --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
             --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest \
-            --tests com.osfans.trime.ime.core.AcWeChatDiagnosticTest
+            --tests com.osfans.trime.ime.core.AcCtrlVimShortcutTest \
+            --tests com.osfans.trime.data.prefs.AcKeyboardHookDefaultsTest
 
       - name: GREEN - full debug unit-test suite
         run: |
@@ -204,16 +206,16 @@ jobs:
           find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print
           test -n "$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
 
-      - name: Upload diagnostic APK and patch
+      - name: Upload v1.4 APK and patch
         uses: actions/upload-artifact@v7
         with:
-          name: trime-ac-dualzone-v1.3.2-diag-arm64
+          name: trime-ac-dualzone-v1.4-arm64
           path: |
             trime/app/build/outputs/apk/debug/*.apk
-            trime-ac-dualzone-v1.3.2-diag.patch
+            trime-ac-dualzone-v1.4.patch
             red-base.log
             red-hotfix.log
             red-v13.log
             red-v131.log
-            red-v132-diag.log
+            red-v14.log
           retention-days: 30
