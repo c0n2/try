@@ -1,0 +1,105 @@
+name: Build RainCandy Wubi86 dictionaries
+
+on:
+  push:
+    branches: [trime-wubi86-raincandy-build]
+    paths:
+      - 'trime-wubi86-raincandy/**'
+      - '.github/workflows/trime-wubi86-raincandy.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_SOURCE_BLOB: db7baaf0bdbaa14ac268488ac8ebeedcba8286e8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit tests
+        run: |
+          python -m pip install --quiet pytest
+          python -m pytest -q trime-wubi86-raincandy/tests
+      - name: Fetch pinned RainCandy source snapshot
+        run: |
+          git clone --depth=1 https://github.com/RainCandyTech/WeaselSchemaSetup.git source
+          ACTUAL_BLOB="$(git -C source rev-parse HEAD:Schemas/RimeWubiTables86/wubi.dict.yaml)"
+          echo "SOURCE_COMMIT=$(git -C source rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "SOURCE_BLOB=$ACTUAL_BLOB" >> "$GITHUB_ENV"
+          test "$ACTUAL_BLOB" = "$EXPECTED_SOURCE_BLOB"
+      - name: Convert dictionaries
+        run: |
+          mkdir -p out
+          python trime-wubi86-raincandy/convert_wubi.py \
+            source/Schemas/RimeWubiTables86/wubi.dict.yaml \
+            out/ac_raincandy_wubi86.dict.yaml \
+            out/ac_raincandy_wubi86_double.dict.yaml
+      - name: Audit real dictionary transformation
+        run: |
+          python - <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import hashlib, os, re
+          import sys
+          sys.path.insert(0, 'trime-wubi86-raincandy')
+          from convert_wubi import parse_entries, fold_code
+
+          src_path = Path('source/Schemas/RimeWubiTables86/wubi.dict.yaml')
+          normal_path = Path('out/ac_raincandy_wubi86.dict.yaml')
+          double_path = Path('out/ac_raincandy_wubi86_double.dict.yaml')
+          src_text = src_path.read_text(encoding='utf-8')
+          normal_text = normal_path.read_text(encoding='utf-8')
+          double_text = double_path.read_text(encoding='utf-8')
+          src = list(parse_entries(src_text))
+          normal = list(parse_entries(normal_text))
+          double = list(parse_entries(double_text))
+          assert len(src) == len(normal) == len(double)
+          changed = 0
+          invalid = 0
+          for s, n, d in zip(src, normal, double):
+              assert n == s
+              assert d[0] == s[0]
+              assert d[1] == fold_code(s[1])
+              assert d[2:] == s[2:]
+              changed += (d[1] != s[1])
+              if not re.fullmatch(r'[a-z]+', s[1]):
+                  invalid += 1
+          src_codes = Counter(row[1] for row in src)
+          dbl_codes = Counter(row[1] for row in double)
+          def sha256(p):
+              return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          report = [
+              'RAIN_CANDY_WUBI86_REAL_AUDIT=PASS',
+              f'SOURCE_COMMIT={os.environ["SOURCE_COMMIT"]}',
+              f'SOURCE_BLOB={os.environ["SOURCE_BLOB"]}',
+              f'SOURCE_ENTRY_COUNT={len(src)}',
+              f'SOURCE_UNIQUE_CODE_COUNT={len(src_codes)}',
+              f'DOUBLE_UNIQUE_CODE_COUNT={len(dbl_codes)}',
+              f'ENTRY_CODE_CHANGED_COUNT={changed}',
+              f'SOURCE_INVALID_LOWERCASE_CODE_COUNT={invalid}',
+              f'MAX_SOURCE_CODE_LENGTH={max(map(len, src_codes))}',
+              f'MAX_DOUBLE_CODE_LENGTH={max(map(len, dbl_codes))}',
+              f'NORMAL_SHA256={sha256(normal_path)}',
+              f'DOUBLE_SHA256={sha256(double_path)}',
+          ]
+          Path('out/real-audit.txt').write_text('\n'.join(report) + '\n', encoding='utf-8')
+          print('\n'.join(report))
+          PY
+      - name: Package source metadata
+        run: |
+          cat > out/source-metadata.txt <<EOF
+          SOURCE_REPOSITORY=https://github.com/RainCandyTech/WeaselSchemaSetup
+          SOURCE_PATH=Schemas/RimeWubiTables86/wubi.dict.yaml
+          SOURCE_COMMIT=$SOURCE_COMMIT
+          SOURCE_GIT_BLOB=$SOURCE_BLOB
+          EXPECTED_SOURCE_GIT_BLOB=$EXPECTED_SOURCE_BLOB
+          EOF
+          sha256sum out/* > out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raincandy-wubi86-converted
+          path: out/
+          if-no-files-found: error
+          compression-level: 9
