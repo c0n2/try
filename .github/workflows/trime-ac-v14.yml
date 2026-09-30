@@ -1,0 +1,199 @@
+name: Trime AC v1.4 Vim build
+
+on:
+  push:
+    branches: [trime-ac-dualzone-build]
+
+permissions:
+  contents: read
+
+env:
+  BUILD_ABI: arm64-v8a
+  TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
+
+jobs:
+  build:
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout build harness
+        uses: actions/checkout@v7
+        with:
+          path: harness
+
+      - name: Checkout pinned Trime
+        uses: actions/checkout@v7
+        with:
+          repository: osfans/trime
+          ref: ${{ env.TRIME_REF }}
+          submodules: recursive
+          fetch-depth: 0
+          path: trime
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+          cache-dependency-path: trime/**/*.gradle*
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install CMake
+        run: sdkmanager --install "cmake;3.31.6"
+
+      - name: RED base
+        run: python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
+
+      - name: Verify RED base
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
+            --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest > ../red-base.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -Eq "Unresolved reference|acLeftId|AcDualZoneSide|resolveAcDualZoneSide" ../red-base.log
+
+      - name: GREEN base
+        run: python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+
+      - name: RED 4.7.1
+        run: python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase tests
+
+      - name: Verify RED 4.7.1
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest --tests com.osfans.trime.daemon.RimeApiForwarderTest > ../red-hotfix.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -Eq "RimeApiForwarder|Unresolved reference" ../red-hotfix.log
+
+      - name: GREEN 4.7.1
+        run: python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
+
+      - name: RED v1.3
+        run: python3 harness/trime-ac-dualzone/apply_v13.py trime --phase tests
+
+      - name: Verify RED v1.3
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest > ../red-v13.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -Eq "AcCtrlSpaceAction|resolveAcCtrlSpaceAction|AcSelectionRange|computeAcSelectAllFallbackRange|Unresolved reference" ../red-v13.log
+
+      - name: GREEN v1.3
+        run: python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
+
+      - name: RED v1.3.1
+        run: python3 harness/trime-ac-dualzone/apply_v131.py trime --phase tests
+
+      - name: Verify RED v1.3.1
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest > ../red-v131.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -Eq "AcKeyChord|acSelectAllKeyChord|Unresolved reference" ../red-v131.log
+
+      - name: GREEN v1.3.1
+        run: python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
+
+      - name: RED v1.4 AC Vim shortcuts
+        run: python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
+
+      - name: Verify RED v1.4
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.core.AcCtrlVimShortcutTest \
+            --tests com.osfans.trime.data.prefs.AcKeyboardHookDefaultsTest > ../red-v14.log 2>&1
+          rc=$?
+          set -e
+          tail -n 120 ../red-v14.log
+          if [ "$rc" -eq 0 ]; then
+            echo "v1.4 RED phase unexpectedly passed"
+            exit 1
+          fi
+          grep -Eq "AcCtrlVimAction|AcCtrlVimFlags|AcKeyboardHookDefaults|resolveAcCtrlVimAction|Unresolved reference" ../red-v14.log
+          echo "V14_RED_PHASE_CONFIRMED"
+
+      - name: GREEN v1.4 AC Vim shortcuts
+        run: python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+
+      - name: Verify production hygiene
+        run: |
+          cd trime
+          git add -N .
+          git diff --check
+          git diff > ../trime-ac-dualzone-v1.4.patch
+          if grep -R "ACIME_DIAG" app/src/main app/src/test; then
+            echo "Diagnostic logging leaked into v1.4"
+            exit 1
+          fi
+          grep -F 'val hookCtrlA = switch(R.string.hook_ctrl_a, HOOK_CTRL_A, AcKeyboardHookDefaults.CTRL_A)' app/src/main/java/com/osfans/trime/data/prefs/AppPrefs.kt
+          grep -F 'val hookCtrlLR = switch(R.string.hook_ctrl_lr, HOOK_CTRL_LR, AcKeyboardHookDefaults.CTRL_LR)' app/src/main/java/com/osfans/trime/data/prefs/AppPrefs.kt
+          grep -F 'hookKeyboard(keyCode, event.metaState)' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+
+      - name: GREEN focused regressions
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
+            --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest \
+            --tests com.osfans.trime.daemon.RimeApiForwarderTest \
+            --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest \
+            --tests com.osfans.trime.ime.core.AcCtrlVimShortcutTest \
+            --tests com.osfans.trime.data.prefs.AcKeyboardHookDefaultsTest
+
+      - name: GREEN full debug unit-test suite
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest
+
+      - name: Build patched debug APK
+        run: |
+          cd trime
+          make debug
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print
+          test -n "$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+
+      - name: Upload v1.4 APK and evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: trime-ac-dualzone-v1.4-vim-arm64
+          path: |
+            trime/app/build/outputs/apk/debug/*.apk
+            trime-ac-dualzone-v1.4.patch
+            red-base.log
+            red-hotfix.log
+            red-v13.log
+            red-v131.log
+            red-v14.log
+          retention-days: 30
