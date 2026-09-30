@@ -120,12 +120,36 @@ jobs:
       - name: GREEN v1.3 - apply native CtrlSpace and CtrlA fallback
         run: python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
 
+      - name: RED v1.3.1 - add real Ctrl+A key-event regression test
+        run: python3 harness/trime-ac-dualzone/apply_v131.py trime --phase tests
+
+      - name: RED v1.3.1 - prove real Ctrl+A chord is not implemented yet
+        shell: bash
+        run: |
+          cd trime
+          set +e
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest \
+            > ../red-v131.log 2>&1
+          rc=$?
+          set -e
+          tail -n 100 ../red-v131.log
+          if [ "$rc" -eq 0 ]; then
+            echo "v1.3.1 RED phase unexpectedly passed"
+            exit 1
+          fi
+          grep -Eq "AcKeyChord|acSelectAllKeyChord|Unresolved reference" ../red-v131.log
+          echo "V131_RED_PHASE_CONFIRMED"
+
+      - name: GREEN v1.3.1 - dispatch real Ctrl+A before API fallbacks
+        run: python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
+
       - name: Verify patch hygiene
         run: |
           cd trime
           git diff --check
           git status --short
-          git diff > ../trime-ac-dualzone-v1.3.patch
+          git diff > ../trime-ac-dualzone-v1.3.1.patch
 
       - name: GREEN - focused regression tests
         run: |
@@ -135,7 +159,8 @@ jobs:
             --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest \
             --tests com.osfans.trime.daemon.RimeApiForwarderTest \
             --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
-            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest
 
       - name: GREEN - full debug unit-test suite
         run: |
@@ -156,11 +181,12 @@ jobs:
       - name: Upload patched APK and patch
         uses: actions/upload-artifact@v7
         with:
-          name: trime-ac-dualzone-v1.3-arm64
+          name: trime-ac-dualzone-v1.3.1-arm64
           path: |
             trime/app/build/outputs/apk/debug/*.apk
-            trime-ac-dualzone-v1.3.patch
+            trime-ac-dualzone-v1.3.1.patch
             red-base.log
             red-hotfix.log
             red-v13.log
+            red-v131.log
           retention-days: 30
