@@ -134,14 +134,13 @@ internal enum class AcCtrlVimAction(val targetKeyCode: Int?) {
 }
 
 internal fun isAcPlainCtrlMetaState(metaState: Int): Boolean {
-    val normalized = KeyEvent.normalizeMetaState(metaState)
-    if (normalized and KeyEvent.META_CTRL_ON == 0) return false
+    if (metaState and KeyEvent.META_CTRL_ON == 0) return false
     val disallowed =
         KeyEvent.META_SHIFT_ON or
             KeyEvent.META_ALT_ON or
             KeyEvent.META_META_ON or
             KeyEvent.META_SYM_ON
-    return normalized and disallowed == 0
+    return metaState and disallowed == 0
 }
 
 internal fun resolveAcCtrlVimAction(
