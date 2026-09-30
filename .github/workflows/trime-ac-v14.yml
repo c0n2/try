@@ -89,7 +89,9 @@ jobs:
           echo "V14_RED_PHASE_CONFIRMED"
 
       - name: GREEN v1.4 - apply AC Vim shortcut layer
-        run: python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+        run: |
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+          python3 harness/trime-ac-dualzone/fix_v14_meta.py trime
 
       - name: Verify production hygiene
         run: |
@@ -107,6 +109,8 @@ jobs:
           grep -F 'val hookCtrlHJKL = switch(R.string.hook_ctrl_hjkl, HOOK_CTRL_HJKL, AcKeyboardHookDefaults.CTRL_HJKL)' app/src/main/java/com/osfans/trime/data/prefs/AppPrefs.kt
           grep -F 'hookKeyboard(keyCode, event.metaState)' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
           grep -F 'showAcClipboardWindow()' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+          grep -F 'KeyEvent.META_CTRL_LEFT_ON' app/src/main/java/com/osfans/trime/ime/core/AcCtrlVimShortcut.kt
+          ! grep -F 'normalizeMetaState' app/src/main/java/com/osfans/trime/ime/core/AcCtrlVimShortcut.kt
 
       - name: GREEN focused regressions
         run: |
