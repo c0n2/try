@@ -14,6 +14,7 @@ env:
   FROST_REF: 2a027a0affdadd43194e6b3dc12cfffdd1426379
   FROST_CHARS_SHA256: c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92
   STEM_ASSET_SHA256: 72c1fef8f31ffd5643391f3bc6c22c74f474218284fc5fcc2c688874aab2bf4b
+  AC_DEBUG_CERT_SHA256: 046B7F50C9BA2FD1E810EEABF246A4A5019F8344D52CEBE6C61EEF7E99CEC181
 
 jobs:
   red-storage-default:
@@ -80,4 +81,182 @@ jobs:
         with:
           name: trime-ac-v1.5.3-storage-red-evidence
           path: red-v153-storage.log
+          retention-days: 30
+
+  build:
+    needs: red-storage-default
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout build harness
+        uses: actions/checkout@v7
+        with:
+          path: harness
+      - name: Checkout pinned Trime
+        uses: actions/checkout@v7
+        with:
+          repository: osfans/trime
+          ref: ${{ env.TRIME_REF }}
+          submodules: recursive
+          fetch-depth: 0
+          path: trime
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+          cache-dependency-path: trime/**/*.gradle*
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install Android build dependencies
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "cmake;3.31.6"
+      - name: Restore v1.5.2 DEVICE-PASS source baseline
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v14-meta
+          python3 - <<'PY'
+          import hashlib, pathlib, urllib.request
+          ref = "2a027a0affdadd43194e6b3dc12cfffdd1426379"
+          url = f"https://raw.githubusercontent.com/gaboolic/rime-frost/{ref}/cn_dicts_wb/chars.dict.yaml"
+          data = urllib.request.urlopen(url, timeout=60).read()
+          got = hashlib.sha256(data).hexdigest()
+          expected = "c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92"
+          if got != expected:
+              raise SystemExit(f"Frost chars SHA mismatch: {got}")
+          pathlib.Path("frost-chars.dict.yaml").write_bytes(data)
+          PY
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase impl --frost-chars frost-chars.dict.yaml
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v15-post
+          python3 harness/trime-ac-dualzone/apply_v151.py trime
+          python3 harness/trime-ac-dualzone/apply_v152.py trime
+      - name: Apply v1.5.3 app-storage default
+        run: python3 harness/trime-ac-dualzone/apply_v153.py trime
+      - name: GREEN v1.5.3 storage contract
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/verify_v153_storage_default.py trime | tee green-v153-storage.log
+          grep -F 'V153_STORAGE_DEFAULT_CONTRACT=PASS' green-v153-storage.log
+      - name: Re-verify v1.5.2 Ctrl+P session contract
+        run: python3 harness/trime-ac-dualzone/verify_v152_session_maintenance.py trime
+      - name: Verify production hygiene
+        shell: bash
+        run: |
+          cd trime
+          git add -N .
+          git diff --check
+          git diff > ../trime-ac-v1.5.3-dev-experience.patch
+          grep -F 'DataStorageMode.APP_STORAGE)' app/src/main/java/com/osfans/trime/data/prefs/AppPrefs.kt
+          grep -F 'DataStorageMode.EXTERNAL_SYNC -> treeUri.isNotEmpty()' app/src/main/java/com/osfans/trime/data/sync/RimeDataSync.kt
+          grep -F 'R.id.sync_from_external_option -> DataStorageMode.EXTERNAL_SYNC' app/src/main/java/com/osfans/trime/ui/setup/SetupFragment.kt
+          grep -F 'R.id.app_specific_storage_option -> DataStorageMode.APP_STORAGE' app/src/main/java/com/osfans/trime/ui/setup/SetupFragment.kt
+          test "$(wc -l < app/src/main/assets/ac_wubi86_stems.tsv)" -eq 27529
+          echo "${STEM_ASSET_SHA256}  app/src/main/assets/ac_wubi86_stems.tsv" | sha256sum -c -
+          if git diff --name-only | grep -F 'tongwenfeng.trime.yaml'; then exit 1; fi
+      - name: Restore fixed AC debug signing key when configured
+        shell: bash
+        env:
+          AC_DEBUG_KEYSTORE_B64: ${{ secrets.AC_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${AC_DEBUG_KEYSTORE_B64:-}" ]; then
+            echo 'AC_FIXED_SIGNING=0' >> "$GITHUB_ENV"
+            echo 'AC_FIXED_SIGNING_STATUS=NOT_CONFIGURED' > ac-signing-status.txt
+            echo 'No AC_DEBUG_KEYSTORE_B64 secret; this CI APK will use an ephemeral runner debug key.'
+            exit 0
+          fi
+          mkdir -p "$HOME/.android"
+          printf '%s' "$AC_DEBUG_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+          chmod 600 "$HOME/.android/debug.keystore"
+          actual="$(keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey | awk '/SHA256:/{print $2; exit}' | tr -d ':')"
+          if [ "$actual" != "$AC_DEBUG_CERT_SHA256" ]; then
+            echo "Unexpected AC debug certificate: $actual"
+            exit 1
+          fi
+          echo 'AC_FIXED_SIGNING=1' >> "$GITHUB_ENV"
+          printf 'AC_FIXED_SIGNING_STATUS=ENABLED\nCERT_SHA256=%s\n' "$actual" > ac-signing-status.txt
+      - name: GREEN focused regressions
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
+            --tests com.osfans.trime.daemon.RimeApiForwarderTest \
+            --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
+            --tests com.osfans.trime.ime.core.AcCtrlVimShortcutTest \
+            --tests com.osfans.trime.data.prefs.AcKeyboardHookDefaultsTest \
+            --tests com.osfans.trime.ime.core.AcAddWordShortcutTest
+      - name: GREEN full debug unit-test suite
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest
+      - name: Build patched debug APK
+        run: |
+          cd trime
+          make debug
+      - name: Verify APK and record signing identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$APKSIGNER" verify --print-certs "$APK" | tee apk-signing.txt
+          digest="$(awk -F': ' '/certificate SHA-256 digest/{print toupper($2); exit}' apk-signing.txt)"
+          if [ "${AC_FIXED_SIGNING:-0}" = "1" ]; then
+            if [ "$digest" != "$AC_DEBUG_CERT_SHA256" ]; then
+              echo "Built APK certificate mismatch: $digest"
+              exit 1
+            fi
+            echo FIXED_SIGNING_APK_CERT=PASS
+          else
+            echo FIXED_SIGNING_APK_CERT=SKIPPED_SECRET_NOT_CONFIGURED
+          fi
+      - name: Package v1.5.3 source-build artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG=Trime-AC-v1.5.3-Dev-Experience-Source-Build
+          mkdir -p "$PKG"
+          APK="$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+          cp "$APK" "$PKG/Trime-AC-v1.5.3-Dev-Experience-arm64-debug.apk"
+          cp trime-ac-v1.5.3-dev-experience.patch "$PKG/"
+          cp green-v153-storage.log "$PKG/"
+          cp ac-signing-status.txt "$PKG/"
+          cp apk-signing.txt "$PKG/"
+          cat > "$PKG/README.txt" <<'EOF'
+          Trime AC v1.5.3 Development Experience
+
+          Functional change:
+          - fresh installs default to APP_STORAGE
+          - EXTERNAL_SYNC remains available and unchanged
+          - v1.5.2 Ctrl+P session-only maintenance is preserved
+
+          Signing:
+          - if AC_DEBUG_KEYSTORE_B64 is configured, CI uses the permanent AC debug certificate
+          - otherwise this source-build artifact is signed by the ephemeral GitHub runner debug key and must NOT become the permanent upgrade baseline
+          EOF
+          (cd "$PKG" && sha256sum * > SHA256SUMS.txt)
+          zip -r "$PKG.zip" "$PKG"
+          sha256sum "$PKG.zip" | tee v153-source-package-sha256.txt
+      - name: Upload v1.5.3 source-build evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: trime-ac-v1.5.3-dev-experience-source-build
+          path: |
+            Trime-AC-v1.5.3-Dev-Experience-Source-Build.zip
+            Trime-AC-v1.5.3-Dev-Experience-Source-Build/
+            v153-source-package-sha256.txt
           retention-days: 30
