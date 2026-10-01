@@ -61,7 +61,7 @@ jobs:
           python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
           python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
           python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
-          python3 harness/trime-ac-dualzone/fix_v14_meta.py trime
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v14-meta
 
       - name: RED v1.5 - add Ctrl+P tests only
         run: python3 harness/trime-ac-dualzone/apply_v15.py trime --phase tests
@@ -104,6 +104,7 @@ jobs:
       - name: GREEN v1.5 - apply Ctrl+P add-word layer
         run: |
           python3 harness/trime-ac-dualzone/apply_v15.py trime --phase impl --frost-chars frost-chars.dict.yaml
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v15-post
 
       - name: Verify production hygiene
         shell: bash
@@ -122,6 +123,7 @@ jobs:
           grep -F 'resolveAcAddWordShortcut(' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
           grep -F 'UserDictManager.importUserDict(' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
           grep -F 'AC_ADD_WORD_USER_DICT' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+          grep -F 'android.text.InputType.TYPE_CLASS_TEXT' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
           test "$(wc -l < app/src/main/assets/ac_wubi86_stems.tsv)" -eq 27529
           echo "${STEM_ASSET_SHA256}  app/src/main/assets/ac_wubi86_stems.tsv" | sha256sum -c -
           if git diff --name-only | grep -F 'tongwenfeng.trime.yaml'; then
@@ -129,6 +131,7 @@ jobs:
             exit 1
           fi
           ! grep -F 'normalizeMetaState' app/src/main/java/com/osfans/trime/ime/core/AcCtrlVimShortcut.kt
+          grep -F 'KeyEvent.META_CTRL_LEFT_ON' app/src/main/java/com/osfans/trime/ime/core/AcCtrlVimShortcut.kt
 
       - name: GREEN focused regressions
         run: |
