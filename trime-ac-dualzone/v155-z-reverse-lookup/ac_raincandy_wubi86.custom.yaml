@@ -1,0 +1,30 @@
+# Trime AC v1.5.5 - Z Pinyin reverse lookup
+# Overlay only: the formal ac_raincandy_wubi86.schema.yaml remains untouched.
+# Based on the official rime-wubi reverse_lookup configuration.
+
+patch:
+  # pinyin_simp is the official dependency used by rime-wubi for Z reverse lookup.
+  schema/dependencies:
+    - pinyin_simp
+
+  # Keep the normal AC Wubi translation path and add the reverse lookup translator.
+  engine/translators:
+    - punct_translator
+    - reverse_lookup_translator
+    - table_translator
+
+  # Z is reserved for reverse lookup; it must never train the normal Wubi userdb.
+  translator/disable_user_dict_for_patterns:
+    - "^z.*$"
+
+  reverse_lookup:
+    dictionary: pinyin_simp
+    prefix: "z"
+    suffix: "'"
+    tips: "〔拼音〕"
+    preedit_format:
+      - "xform/([nl])v/$1ü/"
+      - "xform/([nl])ue/$1üe/"
+      - "xform/([jqxy])v/$1u/"
+
+  recognizer/patterns/reverse_lookup: "^z[a-z]*'?$"
