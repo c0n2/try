@@ -1,0 +1,79 @@
+name: Trime AC v1.5.4 dedicated data root
+
+on:
+  push:
+    branches: [trime-ac-v154-dedicated-root]
+
+permissions:
+  contents: read
+
+env:
+  TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
+
+jobs:
+  red-dedicated-root:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: harness
+      - uses: actions/checkout@v7
+        with:
+          repository: osfans/trime
+          ref: ${{ env.TRIME_REF }}
+          submodules: recursive
+          fetch-depth: 0
+          path: trime
+      - name: Restore v1.5.3 fixed-signing source baseline
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v14-meta
+          python3 - <<'PY'
+          import hashlib, pathlib, urllib.request
+          ref = "2a027a0affdadd43194e6b3dc12cfffdd1426379"
+          url = f"https://raw.githubusercontent.com/gaboolic/rime-frost/{ref}/cn_dicts_wb/chars.dict.yaml"
+          data = urllib.request.urlopen(url, timeout=60).read()
+          got = hashlib.sha256(data).hexdigest()
+          expected = "c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92"
+          if got != expected:
+              raise SystemExit(f"Frost chars SHA mismatch: {got}")
+          pathlib.Path("frost-chars.dict.yaml").write_bytes(data)
+          PY
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase impl --frost-chars frost-chars.dict.yaml
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v15-post
+          python3 harness/trime-ac-dualzone/apply_v151.py trime
+          python3 harness/trime-ac-dualzone/apply_v152.py trime
+          python3 harness/trime-ac-dualzone/apply_v153.py trime
+      - name: RED v1.5.4 dedicated-root contract
+        shell: bash
+        run: |
+          set +e
+          python3 harness/trime-ac-dualzone/verify_v154_dedicated_root.py trime > red-v154-dedicated-root.log 2>&1
+          rc=$?
+          set -e
+          cat red-v154-dedicated-root.log
+          if [ "$rc" -eq 0 ]; then
+            echo "Expected v1.5.3 baseline to fail v1.5.4 dedicated-root contract"
+            exit 1
+          fi
+          grep -F 'FAIL=EXTERNAL_SYNC_IS_AC_FRESH_INSTALL_DEFAULT' red-v154-dedicated-root.log
+          grep -F 'FAIL=AC_DEDICATED_ROOT_IS_DECLARED' red-v154-dedicated-root.log
+          grep -F 'FAIL=IMPORT_FAILURE_DOES_NOT_ROLL_BACK_SAF_GRANT' red-v154-dedicated-root.log
+          grep -F 'FAIL=V153_APP_STORAGE_HAS_ONE_TIME_MIGRATION_MARKER' red-v154-dedicated-root.log
+          echo V154_DEDICATED_ROOT_RED_PHASE_CONFIRMED
+      - uses: actions/upload-artifact@v7
+        with:
+          name: trime-ac-v1.5.4-dedicated-root-red-evidence
+          path: red-v154-dedicated-root.log
+          retention-days: 30
