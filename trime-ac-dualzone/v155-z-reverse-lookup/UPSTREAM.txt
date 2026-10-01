@@ -1,0 +1,16 @@
+Trime AC v1.5.5 Z Reverse Lookup upstream identity
+
+Repository: https://github.com/rime/rime-pinyin-simp
+Pinned commit: 0c6861ef7420ee780270ca6d993d18d4101049d0
+Pinned tree: 0b578d990c113337d49cb5b8f8f207451014d9c8
+
+Required upstream files at that commit:
+- pinyin_simp.dict.yaml
+  Git blob: 6f2e996d2792416cb7f41bb49967a1dec7060c92
+- pinyin_simp.schema.yaml
+  Git blob: eac8d5d08f0160667c607721f09600492794c189
+- LICENSE
+  Git blob: d645695673349e3947e8e5ae42332d0ac3164cd7
+
+The workflow downloads these files from the pinned commit, never from a floating branch.
+The upstream pinyin-simp dictionary/schema are distributed under the license supplied by that repository.
