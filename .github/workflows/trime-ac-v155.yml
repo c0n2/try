@@ -1,0 +1,33 @@
+name: Trime AC v1.5.5 Z Reverse Lookup
+
+on:
+  push:
+    branches:
+      - trime-ac-v155-next
+    paths:
+      - 'trime-ac-dualzone/verify_v155_z_reverse_lookup.py'
+      - 'trime-ac-dualzone/v155-z-reverse-lookup/**'
+      - '.github/workflows/trime-ac-v155.yml'
+  workflow_dispatch:
+
+jobs:
+  red-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm v1.5.5 contract is RED before implementation
+        shell: bash
+        run: |
+          set +e
+          python3 trime-ac-dualzone/verify_v155_z_reverse_lookup.py \
+            trime-ac-dualzone/v155-z-reverse-lookup > v155-red.log 2>&1
+          rc=$?
+          cat v155-red.log
+          if [ "$rc" -eq 0 ]; then
+            echo 'Expected RED but verifier passed.' >&2
+            exit 1
+          fi
+          grep -F 'FAIL=AC_CUSTOM_PATCH_EXISTS' v155-red.log
+          grep -F 'FAIL=UPSTREAM_MANIFEST_EXISTS' v155-red.log
+          grep -F 'V155_Z_REVERSE_LOOKUP_CONTRACT=FAIL:' v155-red.log
+          echo 'V155_Z_REVERSE_LOOKUP_RED_PHASE_CONFIRMED'
