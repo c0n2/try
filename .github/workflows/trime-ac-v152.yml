@@ -11,6 +11,7 @@ env:
   TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
   FROST_REF: 2a027a0affdadd43194e6b3dc12cfffdd1426379
   FROST_CHARS_SHA256: c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92
+  STEM_ASSET_SHA256: 72c1fef8f31ffd5643391f3bc6c22c74f474218284fc5fcc2c688874aab2bf4b
 
 jobs:
   red:
@@ -63,10 +64,7 @@ jobs:
           rc=$?
           set -e
           cat red-v152.log
-          if [ "$rc" -eq 0 ]; then
-            echo "v1.5.2 RED unexpectedly passed"
-            exit 1
-          fi
+          if [ "$rc" -eq 0 ]; then exit 1; fi
           grep -F 'FAIL=SERVICE_NOT_SESSION_MAINTENANCE_WRAPPED' red-v152.log
           grep -F 'FAIL=RIME_SESSION_MAINTENANCE_API_MISSING' red-v152.log
           grep -F 'FAIL=JNI_RELEASE_SESSION_IMPL_MISSING' red-v152.log
@@ -76,4 +74,151 @@ jobs:
         with:
           name: trime-ac-v1.5.2-red-evidence
           path: red-v152.log
+          retention-days: 30
+
+  build:
+    needs: red
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout build harness
+        uses: actions/checkout@v7
+        with:
+          path: harness
+      - name: Checkout pinned Trime
+        uses: actions/checkout@v7
+        with:
+          repository: osfans/trime
+          ref: ${{ env.TRIME_REF }}
+          submodules: recursive
+          fetch-depth: 0
+          path: trime
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+          cache-dependency-path: trime/**/*.gradle*
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install CMake
+        run: sdkmanager --install "cmake;3.31.6"
+      - name: Restore v1.5.1 baseline
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v14-meta
+          python3 - <<'PY'
+          import hashlib, pathlib, urllib.request
+          ref = "2a027a0affdadd43194e6b3dc12cfffdd1426379"
+          url = f"https://raw.githubusercontent.com/gaboolic/rime-frost/{ref}/cn_dicts_wb/chars.dict.yaml"
+          data = urllib.request.urlopen(url, timeout=60).read()
+          got = hashlib.sha256(data).hexdigest()
+          expected = "c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92"
+          if got != expected: raise SystemExit(f"Frost chars SHA mismatch: {got}")
+          pathlib.Path("frost-chars.dict.yaml").write_bytes(data)
+          PY
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase impl --frost-chars frost-chars.dict.yaml
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v15-post
+          python3 harness/trime-ac-dualzone/apply_v151.py trime
+      - name: Apply v1.5.2 session-only fix
+        run: python3 harness/trime-ac-dualzone/apply_v152.py trime
+      - name: GREEN v1.5.2 contract
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/verify_v152_session_maintenance.py trime | tee green-v152.log
+          grep -F 'V152_SESSION_MAINTENANCE_CONTRACT=PASS' green-v152.log
+          grep -F 'PASS=RIME_RELEASES_ONLY_NATIVE_SESSION' green-v152.log
+          grep -F 'PASS=LIBRIME_LIFECYCLE_REMAINS_READY' green-v152.log
+      - name: Verify production hygiene
+        shell: bash
+        run: |
+          cd trime
+          git add -N .
+          git diff --check
+          git diff > ../trime-ac-v1.5.2-ctrlp-fix.patch
+          grep -F 'RimeDaemon.runSessionMaintenance {' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+          grep -F 'suspend fun <T> runSessionMaintenance' app/src/main/java/com/osfans/trime/daemon/RimeDaemon.kt
+          grep -F 'realRime.runSessionMaintenance(block)' app/src/main/java/com/osfans/trime/daemon/RimeDaemon.kt
+          grep -F 'releaseRimeSession()' app/src/main/java/com/osfans/trime/core/Rime.kt
+          grep -F 'void releaseSession()' app/src/main/jni/librime_jni/rime_jni.cc
+          grep -F 'Java_com_osfans_trime_core_Rime_releaseRimeSession' app/src/main/jni/librime_jni/rime_jni.cc
+          ! grep -F 'RimeDaemon.runMaintenance {' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+          test "$(wc -l < app/src/main/assets/ac_wubi86_stems.tsv)" -eq 27529
+          echo "${STEM_ASSET_SHA256}  app/src/main/assets/ac_wubi86_stems.tsv" | sha256sum -c -
+          if git diff --name-only | grep -F 'tongwenfeng.trime.yaml'; then exit 1; fi
+      - name: GREEN focused regressions
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
+            --tests com.osfans.trime.daemon.RimeApiForwarderTest \
+            --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
+            --tests com.osfans.trime.ime.core.AcCtrlVimShortcutTest \
+            --tests com.osfans.trime.data.prefs.AcKeyboardHookDefaultsTest \
+            --tests com.osfans.trime.ime.core.AcAddWordShortcutTest
+      - name: GREEN full debug unit-test suite
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest
+      - name: Build patched debug APK
+        run: |
+          cd trime
+          make debug
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print
+          test -n "$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+      - name: Package v1.5.2 deliverable
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG=Trime-AC-v1.5.2-CtrlP-Session-Fix
+          mkdir -p "$PKG"
+          APK="$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+          cp "$APK" "$PKG/Trime-AC-v1.5.2-CtrlP-Session-Fix-arm64-debug.apk"
+          cp trime-ac-v1.5.2-ctrlp-fix.patch "$PKG/"
+          cp green-v152.log "$PKG/"
+          cat > "$PKG/README.txt" <<'EOF'
+          Trime AC v1.5.2 Ctrl+P Session Fix
+
+          Device finding from v1.5.1:
+          - no selection: dialog works
+          - valid selection: immediate crash
+
+          Root-cause fix:
+          - keep librime initialized
+          - serialize maintenance on Rime dispatcher
+          - release only the active native SessionHolder to free userdb lock
+          - call levers import while librime remains initialized
+          - next Rime operation lazily creates a fresh native session
+          - no lifecycle STOP/START and no LOCK-file mutation
+
+          Status: CI PASS only. DEVICE-PASS requires real-device verification.
+          EOF
+          (cd "$PKG" && sha256sum * > SHA256SUMS.txt)
+          zip -r "$PKG.zip" "$PKG"
+          sha256sum "$PKG.zip" | tee v152-package-sha256.txt
+      - name: Upload v1.5.2 APK and evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: trime-ac-v1.5.2-ctrlp-session-fix-arm64
+          path: |
+            Trime-AC-v1.5.2-CtrlP-Session-Fix.zip
+            Trime-AC-v1.5.2-CtrlP-Session-Fix/
+            v152-package-sha256.txt
           retention-days: 30
