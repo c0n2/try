@@ -15,12 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Confirm v1.5.5 contract is RED before implementation
+      - name: Replay v1.5.5 RED contract against empty baseline
         shell: bash
         run: |
           set +e
-          python3 trime-ac-dualzone/verify_v155_z_reverse_lookup.py \
-            trime-ac-dualzone/v155-z-reverse-lookup > v155-red.log 2>&1
+          EMPTY="$RUNNER_TEMP/v155-empty-baseline"
+          mkdir -p "$EMPTY"
+          python3 trime-ac-dualzone/verify_v155_z_reverse_lookup.py "$EMPTY" > v155-red.log 2>&1
           rc=$?
           cat v155-red.log
           if [ "$rc" -eq 0 ]; then
@@ -31,3 +32,256 @@ jobs:
           grep -F 'FAIL=UPSTREAM_MANIFEST_EXISTS' v155-red.log
           grep -F 'V155_Z_REVERSE_LOOKUP_CONTRACT=FAIL:' v155-red.log
           echo 'V155_Z_REVERSE_LOOKUP_RED_PHASE_CONFIRMED'
+
+  green-package:
+    needs: red-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify v1.5.5 source contract GREEN
+        shell: bash
+        run: |
+          python3 trime-ac-dualzone/verify_v155_z_reverse_lookup.py \
+            trime-ac-dualzone/v155-z-reverse-lookup
+
+      - name: Assemble pinned pinyin-simp data package
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=trime-ac-dualzone/v155-z-reverse-lookup
+          OUT="$RUNNER_TEMP/Trime-AC-v1.5.5-Z-Reverse-Lookup-Data"
+          PIN=0c6861ef7420ee780270ca6d993d18d4101049d0
+          RAW="https://raw.githubusercontent.com/rime/rime-pinyin-simp/$PIN"
+          mkdir -p "$OUT"
+          cp "$SRC/ac_raincandy_wubi86.custom.yaml" "$OUT/"
+          cp "$SRC/UPSTREAM.txt" "$OUT/"
+          cp "$SRC/README.txt" "$OUT/"
+          curl --fail --location --retry 3 "$RAW/pinyin_simp.dict.yaml" -o "$OUT/pinyin_simp.dict.yaml"
+          curl --fail --location --retry 3 "$RAW/pinyin_simp.schema.yaml" -o "$OUT/pinyin_simp.schema.yaml"
+          curl --fail --location --retry 3 "$RAW/LICENSE" -o "$OUT/PINYIN_SIMP_LICENSE"
+          python3 trime-ac-dualzone/verify_v155_z_reverse_lookup.py "$OUT" --artifact
+          (
+            cd "$OUT"
+            sha256sum \
+              ac_raincandy_wubi86.custom.yaml \
+              pinyin_simp.dict.yaml \
+              pinyin_simp.schema.yaml \
+              PINYIN_SIMP_LICENSE \
+              README.txt \
+              UPSTREAM.txt > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+          echo "V155_PACKAGE_ROOT=$OUT" >> "$GITHUB_ENV"
+
+      - name: Install host librime tools
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y librime-bin librime-dev g++
+          rime_deployer 2>&1 | head -40 || true
+
+      - name: Compile fixture with .custom overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          USER="$RUNNER_TEMP/rime-v155-user"
+          mkdir -p "$USER"
+          cp "$V155_PACKAGE_ROOT/ac_raincandy_wubi86.custom.yaml" "$USER/"
+          cp "$V155_PACKAGE_ROOT/pinyin_simp.dict.yaml" "$USER/"
+          cp "$V155_PACKAGE_ROOT/pinyin_simp.schema.yaml" "$USER/"
+
+          cat > "$USER/default.yaml" <<'YAML'
+          config_version: "v155-test"
+          schema_list:
+            - schema: ac_raincandy_wubi86
+          menu:
+            page_size: 9
+          punctuator:
+            full_shape: {}
+            half_shape: {}
+          key_binder:
+            bindings: []
+          recognizer:
+            patterns: {}
+          YAML
+
+          cat > "$USER/symbols.yaml" <<'YAML'
+          punctuator:
+            full_shape: {}
+            half_shape: {}
+          YAML
+
+          cat > "$USER/ac_raincandy_wubi86.schema.yaml" <<'YAML'
+          schema:
+            schema_id: ac_raincandy_wubi86
+            name: "五笔86·AC v1.5.5 fixture"
+            version: "1.5.5-test"
+          switches:
+            - name: ascii_mode
+              reset: 0
+              states: [中, 英]
+          engine:
+            processors:
+              - ascii_composer
+              - recognizer
+              - key_binder
+              - speller
+              - punctuator
+              - selector
+              - navigator
+              - express_editor
+            segmentors:
+              - ascii_segmentor
+              - matcher
+              - abc_segmentor
+              - punct_segmentor
+              - fallback_segmentor
+            translators:
+              - punct_translator
+              - table_translator
+            filters:
+              - uniquifier
+          speller:
+            delimiter: " ;'"
+          translator:
+            dictionary: ac_raincandy_wubi86
+            user_dict: ac_raincandy_wubi86_user
+            enable_user_dict: true
+            enable_sentence: false
+            enable_completion: true
+            enable_encoder: false
+            encode_commit_history: false
+          punctuator:
+            import_preset: default
+          key_binder:
+            import_preset: default
+          recognizer:
+            import_preset: default
+          YAML
+
+          cat > "$USER/ac_raincandy_wubi86.dict.yaml" <<'YAML'
+          ---
+          name: ac_raincandy_wubi86
+          version: "1.5.5-test"
+          sort: by_weight
+          use_preset_vocabulary: false
+          ...
+          你	wqiy	10000
+          尼	nxv	9000
+          泥	inxn	8000
+          一	ggll	10000
+          YAML
+
+          cat > "$USER/stroke.schema.yaml" <<'YAML'
+          schema:
+            schema_id: stroke
+            name: stroke-test
+            version: "1"
+          engine:
+            processors: [speller, selector, navigator, express_editor]
+            segmentors: [abc_segmentor, fallback_segmentor]
+            translators: [table_translator]
+          translator:
+            dictionary: stroke
+          YAML
+
+          cat > "$USER/stroke.dict.yaml" <<'YAML'
+          ---
+          name: stroke
+          version: "1"
+          sort: original
+          ...
+          一	h	1
+          YAML
+
+          rime_deployer --build "$USER" "$USER" "$USER/build"
+          test -f "$USER/build/ac_raincandy_wubi86.schema.yaml"
+          test -f "$USER/build/ac_raincandy_wubi86.table.bin"
+          test -f "$USER/build/pinyin_simp.table.bin"
+          grep -F 'reverse_lookup_translator' "$USER/build/ac_raincandy_wubi86.schema.yaml"
+          grep -F 'dictionary: pinyin_simp' "$USER/build/ac_raincandy_wubi86.schema.yaml"
+          grep -F "reverse_lookup: ^z[a-z]*'?" "$USER/build/ac_raincandy_wubi86.schema.yaml" || \
+            grep -F "^z[a-z]*'?$" "$USER/build/ac_raincandy_wubi86.schema.yaml"
+          echo "V155_RIME_COMPILE=PASS"
+          echo "V155_RIME_USER=$USER" >> "$GITHUB_ENV"
+
+      - name: Native librime runtime smoke test for zni and Wubi annotation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/v155_rime_smoke.cc" <<'CPP'
+          #include <rime_api.h>
+          #include <cstdlib>
+          #include <cstring>
+          #include <iostream>
+          #include <string>
+
+          int main(int argc, char** argv) {
+            if (argc != 2) return 2;
+            const char* dir = argv[1];
+            RimeApi* rime = rime_get_api();
+            RIME_STRUCT(RimeTraits, traits);
+            traits.shared_data_dir = dir;
+            traits.user_data_dir = dir;
+            traits.staging_dir = dir;
+            traits.app_name = "rime.ac_v155_ci";
+            rime->setup(&traits);
+            rime->initialize(&traits);
+            if (rime->start_maintenance(True)) rime->join_maintenance_thread();
+            RimeSessionId s = rime->create_session();
+            if (!s) return 3;
+            if (!rime->select_schema(s, "ac_raincandy_wubi86")) return 4;
+            if (!rime->simulate_key_sequence(s, "zni")) return 5;
+            RIME_STRUCT(RimeContext, ctx);
+            if (!rime->get_context(s, &ctx)) return 6;
+            bool saw_ni = false;
+            bool saw_wqiy = false;
+            std::cout << "candidate_count=" << ctx.menu.num_candidates << "\n";
+            for (int i = 0; i < ctx.menu.num_candidates; ++i) {
+              const char* text = ctx.menu.candidates[i].text ? ctx.menu.candidates[i].text : "";
+              const char* comment = ctx.menu.candidates[i].comment ? ctx.menu.candidates[i].comment : "";
+              std::cout << (i + 1) << ":" << text << ":" << comment << "\n";
+              if (std::strcmp(text, "你") == 0) {
+                saw_ni = true;
+                if (std::string(comment).find("wqiy") != std::string::npos) saw_wqiy = true;
+              }
+            }
+            rime->free_context(&ctx);
+            rime->destroy_session(s);
+            rime->finalize();
+            if (!saw_ni) {
+              std::cerr << "missing candidate 你\n";
+              return 7;
+            }
+            if (!saw_wqiy) {
+              std::cerr << "candidate 你 missing Wubi annotation wqiy\n";
+              return 8;
+            }
+            std::cout << "V155_ZNI_RUNTIME=PASS\n";
+            return 0;
+          }
+          CPP
+          g++ -std=c++17 "$RUNNER_TEMP/v155_rime_smoke.cc" -lrime -o "$RUNNER_TEMP/v155_rime_smoke"
+          "$RUNNER_TEMP/v155_rime_smoke" "$V155_RIME_USER"
+
+      - name: Package user-facing ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          (
+            cd "$(dirname "$V155_PACKAGE_ROOT")"
+            zip -qr "$GITHUB_WORKSPACE/dist/Trime-AC-v1.5.5-Z-Reverse-Lookup-Data.zip" \
+              "$(basename "$V155_PACKAGE_ROOT")"
+          )
+          sha256sum dist/Trime-AC-v1.5.5-Z-Reverse-Lookup-Data.zip | tee dist/ZIP-SHA256.txt
+
+      - name: Upload v1.5.5 data package
+        uses: actions/upload-artifact@v4
+        with:
+          name: trime-ac-v1.5.5-z-reverse-lookup-data
+          path: |
+            dist/Trime-AC-v1.5.5-Z-Reverse-Lookup-Data.zip
+            dist/ZIP-SHA256.txt
+          if-no-files-found: error
