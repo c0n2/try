@@ -72,9 +72,6 @@ if a.phase == 'v14-meta':
         helper_path.write_text(text.replace(old, final, 1), encoding='utf-8')
         print(f'V14_META_BITMASK_COMPAT_FIX_APPLIED_FROM={name}')
 
-    # apply_v15 inserts immediately after `val ic`. Its historical anchor used
-    # the stock Chinese comment, while v1.4 changed only that comment. Restore
-    # the comment text without changing the v1.4 bit-mask condition semantics.
     service_path = root / 'app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt'
     service = service_path.read_text(encoding='utf-8')
     old_comment = '        // 没按下 Ctrl 键\n'
@@ -94,4 +91,13 @@ replace_exact(
     'inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS',
     'inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS',
 )
+text = path.read_text(encoding='utf-8')
+if 'import com.osfans.trime.R\n' not in text:
+    anchor = 'import com.osfans.trime.core.KeyModifiers\n'
+    if text.count(anchor) != 1:
+        raise SystemExit('cannot place com.osfans.trime.R import')
+    path.write_text(text.replace(anchor, 'import com.osfans.trime.R\n' + anchor, 1), encoding='utf-8')
+    print('V15_APP_R_IMPORT_APPLIED')
+else:
+    print('V15_APP_R_IMPORT_ALREADY_PRESENT')
 print('V15_POST_IMPORT_COMPAT_FIX_APPLIED')
