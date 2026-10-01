@@ -8,6 +8,8 @@ permissions:
   contents: read
 
 env:
+  CI_NAME: AC CtrlP v1.5.2 Session Fix
+  BUILD_ABI: arm64-v8a
   TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
   FROST_REF: 2a027a0affdadd43194e6b3dc12cfffdd1426379
   FROST_CHARS_SHA256: c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92
