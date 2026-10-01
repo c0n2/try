@@ -9,12 +9,14 @@ permissions:
 
 env:
   CI_NAME: AC CtrlP v1.5.1 Runtime Fix
+  BUILD_ABI: arm64-v8a
   TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
   FROST_REF: 2a027a0affdadd43194e6b3dc12cfffdd1426379
   FROST_CHARS_SHA256: c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92
+  STEM_ASSET_SHA256: 72c1fef8f31ffd5643391f3bc6c22c74f474218284fc5fcc2c688874aab2bf4b
 
 jobs:
-  red:
+  build:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout build harness
@@ -30,6 +32,22 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           path: trime
+
+      - name: Setup Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+          cache-dependency-path: trime/**/*.gradle*
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install CMake
+        run: sdkmanager --install "cmake;3.31.6"
 
       - name: Restore verified base through v1.4
         run: |
@@ -85,9 +103,113 @@ jobs:
           grep -F 'FAIL=ADD_WORD_IMPORT_NOT_MAINTENANCE_WRAPPED' red-v151-runtime.log
           echo 'V151_RED_PHASE_CONFIRMED'
 
-      - name: Upload RED evidence
+      - name: GREEN v1.5.1 - apply runtime fix
+        run: python3 harness/trime-ac-dualzone/apply_v151.py trime
+
+      - name: GREEN v1.5.1 - runtime contract
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/verify_v151_runtime.py trime | tee green-v151-runtime.log
+          grep -F 'V151_RUNTIME_CONTRACT=PASS' green-v151-runtime.log
+          grep -F 'UI_MAIN_DISPATCH=PASS' green-v151-runtime.log
+          grep -F 'RIME_STOP_IMPORT_RESTART=PASS' green-v151-runtime.log
+          grep -F 'USERDB_LOCK_MUTATION=ABSENT_PASS' green-v151-runtime.log
+
+      - name: Verify production hygiene
+        shell: bash
+        run: |
+          cd trime
+          git add -N .
+          git diff --check
+          git status --short
+          git diff > ../trime-ac-v1.5.1-ctrlp-fix.patch
+          if grep -R "ACIME_DIAG" app/src/main app/src/test; then
+            echo "Diagnostic logging leaked into v1.5.1"
+            exit 1
+          fi
+          grep -F 'lifecycleScope.launch(Dispatchers.Main.immediate)' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+          grep -F 'RimeDaemon.runMaintenance {' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+          grep -F 'fun <T> runMaintenance(block: () -> T): T = lock.withLock {' app/src/main/java/com/osfans/trime/daemon/RimeDaemon.kt
+          grep -F 'realRime.finalize()' app/src/main/java/com/osfans/trime/daemon/RimeDaemon.kt
+          grep -F 'scheduleStartupRetry()' app/src/main/java/com/osfans/trime/daemon/RimeDaemon.kt
+          grep -F 'const val CTRL_P = true' app/src/main/java/com/osfans/trime/data/prefs/AcKeyboardHookDefaults.kt
+          grep -F 'resolveAcAddWordShortcut(' app/src/main/java/com/osfans/trime/ime/core/TrimeInputMethodService.kt
+          test "$(wc -l < app/src/main/assets/ac_wubi86_stems.tsv)" -eq 27529
+          echo "${STEM_ASSET_SHA256}  app/src/main/assets/ac_wubi86_stems.tsv" | sha256sum -c -
+          if git diff --name-only | grep -F 'tongwenfeng.trime.yaml'; then
+            echo "tongwenfeng.trime.yaml must remain untouched"
+            exit 1
+          fi
+          ! grep -F 'normalizeMetaState' app/src/main/java/com/osfans/trime/ime/core/AcCtrlVimShortcut.kt
+          grep -F 'KeyEvent.META_CTRL_LEFT_ON' app/src/main/java/com/osfans/trime/ime/core/AcCtrlVimShortcut.kt
+
+      - name: GREEN focused regressions
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest \
+            --tests com.osfans.trime.ime.keyboard.AcDualZoneTest \
+            --tests com.osfans.trime.data.theme.AcDualZoneTextKeyTest \
+            --tests com.osfans.trime.daemon.RimeApiForwarderTest \
+            --tests com.osfans.trime.ime.keyboard.AcCtrlSpacePolicyTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllFallbackTest \
+            --tests com.osfans.trime.ime.core.AcSelectAllKeyEventTest \
+            --tests com.osfans.trime.ime.core.AcCtrlVimShortcutTest \
+            --tests com.osfans.trime.data.prefs.AcKeyboardHookDefaultsTest \
+            --tests com.osfans.trime.ime.core.AcAddWordShortcutTest
+
+      - name: GREEN full debug unit-test suite
+        run: |
+          cd trime
+          ./gradlew :app:testDebugUnitTest
+
+      - name: Build patched debug APK
+        run: |
+          cd trime
+          make debug
+
+      - name: Verify APK exists
+        shell: bash
+        run: |
+          find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print
+          test -n "$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+
+      - name: Package v1.5.1 deliverable
+        shell: bash
+        run: |
+          set -euo pipefail
+          PKG=Trime-AC-v1.5.1-CtrlP-Fix
+          mkdir -p "$PKG"
+          APK="$(find trime/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+          cp "$APK" "$PKG/Trime-AC-v1.5.1-CtrlP-Fix-arm64-debug.apk"
+          cp trime-ac-v1.5.1-ctrlp-fix.patch "$PKG/"
+          cp red-v151-runtime.log green-v151-runtime.log "$PKG/"
+          cat > "$PKG/README.txt" <<'EOF'
+          Trime AC v1.5.1 Ctrl+P Fix
+
+          Fixes:
+          1. Ctrl+P manual add-word dialog is dispatched to Android Main.
+          2. Ctrl+P user-dictionary import runs while Rime is temporarily finalized,
+             releasing the live LevelDB userdb lock, then Rime is restarted in finally.
+
+          Baseline preserved:
+          - pinned Trime 75844aef84f3849c7f6dd49a52bb75c46200af44
+          - v1.4 AC Vim hardware layer / Ctrl+Space behavior
+          - v1.5 Ctrl+P validation and Wubi86 encoding
+          - no tongwenfeng.trime.yaml modification
+          - no Phase 1 lexicon/data change
+
+          Status: CI PASS only. DEVICE-PASS requires real-device verification.
+          EOF
+          (cd "$PKG" && sha256sum * > SHA256SUMS.txt)
+          zip -r "$PKG.zip" "$PKG"
+          sha256sum "$PKG.zip" | tee v151-package-sha256.txt
+
+      - name: Upload v1.5.1 APK and evidence
         uses: actions/upload-artifact@v7
         with:
-          name: trime-ac-v1.5.1-red-evidence
-          path: red-v151-runtime.log
+          name: trime-ac-v1.5.1-ctrlp-fix-arm64
+          path: |
+            Trime-AC-v1.5.1-CtrlP-Fix.zip
+            Trime-AC-v1.5.1-CtrlP-Fix/
+            v151-package-sha256.txt
           retention-days: 30
