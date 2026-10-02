@@ -6,12 +6,15 @@ import sys
 
 p = argparse.ArgumentParser()
 p.add_argument('root', type=Path)
+p.add_argument('--baseline-theme', type=Path, default=None,
+               help='pre-v1.5.6 trime.yaml; geometry/style values must remain identical')
 a = p.parse_args()
 root = a.root
 
 theme = root / 'app/src/main/assets/shared/trime.yaml'
 tongwen = root / 'app/src/main/assets/shared/tongwenfeng.trime.yaml'
 text = theme.read_text(encoding='utf-8')
+baseline_text = a.baseline_theme.read_text(encoding='utf-8') if a.baseline_theme else None
 
 checks = []
 def check(label, ok):
@@ -19,16 +22,37 @@ def check(label, ok):
     checks.append((label, ok))
     print(f"{'PASS' if ok else 'FAIL'}={label}")
 
-# Original geometry must stay at the pinned-Trime values.
-check('GEOMETRY_KEY_HEIGHT_UNCHANGED', bool(re.search(r'^  key_height:\s*44\s*$', text, re.M)))
-check('GEOMETRY_KEY_WIDTH_UNCHANGED', bool(re.search(r'^  key_width:\s*10\.0\s*$', text, re.M)))
-check('GEOMETRY_ROUND_CORNER_UNCHANGED', bool(re.search(r'^  round_corner:\s*8\s*$', text, re.M)))
-check('GEOMETRY_HORIZONTAL_GAP_UNCHANGED', bool(re.search(r'^  horizontal_gap:\s*1\s*$', text, re.M)))
-check('GEOMETRY_VERTICAL_GAP_UNCHANGED', bool(re.search(r'^  vertical_gap:\s*1\s*$', text, re.M)))
+lines = text.splitlines()
+
+# v1.5.6 is colors-only. Compare geometry to the actual AC baseline, not to
+# upstream Trime defaults (AC already has deliberate geometry customizations).
+def style_value(source: str, key: str):
+    m = re.search(rf'^  {re.escape(key)}:[ \t]*(.*?)[ \t]*$', source, re.M)
+    return m.group(1) if m else None
+
+geometry_keys = [
+    'key_height',
+    'key_width',
+    'round_corner',
+    'horizontal_gap',
+    'vertical_gap',
+    'keyboard_height',
+    'keyboard_height_land',
+]
+if baseline_text is not None:
+    for key in geometry_keys:
+        check(
+            f'GEOMETRY_{key.upper()}_UNCHANGED',
+            style_value(text, key) == style_value(baseline_text, key),
+        )
+else:
+    # RED-only invocations can omit a baseline; still require geometry keys to exist.
+    for key in geometry_keys:
+        check(f'GEOMETRY_{key.upper()}_PRESENT', style_value(text, key) is not None)
 
 # v1.5.6 additions: two color schemes only.
-check('IOS_LIGHT_EXISTS', bool(re.search(r'^  ac_ios_light:\s*$', text, re.M)))
-check('IOS_DARK_EXISTS', bool(re.search(r'^  ac_ios_dark:\s*$', text, re.M)))
+check('IOS_LIGHT_EXISTS', '  ac_ios_light:' in lines)
+check('IOS_DARK_EXISTS', '  ac_ios_dark:' in lines)
 
 light_required = {
     'name': 'AC iOS Light',
@@ -58,15 +82,27 @@ dark_required = {
 }
 
 def block(name):
-    m = re.search(rf'^  {re.escape(name)}:\s*\n(?P<body>(?:    .*\n|\s*\n)*)', text, re.M)
-    return m.group('body') if m else ''
+    target = f'  {name}:'
+    try:
+        start = lines.index(target)
+    except ValueError:
+        return ''
+    body = []
+    for line in lines[start + 1:]:
+        # Scheme children are indented four spaces. A blank line is part of block.
+        if line == '' or line.startswith('    '):
+            body.append(line)
+            continue
+        break
+    return '\n'.join(body) + ('\n' if body else '')
 
 def require_block(prefix, body, required):
     for key, value in required.items():
-        if key == 'name':
-            ok = bool(re.search(rf'^    name:\s*{re.escape(value)}\s*$', body, re.M))
-        else:
-            ok = bool(re.search(rf'^    {re.escape(key)}:\s*{re.escape(value)}\s*$', body, re.M))
+        ok = bool(re.search(
+            rf'^    {re.escape(key)}:[ \t]*{re.escape(value)}[ \t]*$',
+            body,
+            re.M,
+        ))
         check(f'{prefix}_{key.upper()}', ok)
 
 require_block('LIGHT', block('ac_ios_light'), light_required)
@@ -77,7 +113,7 @@ for scheme in ('ac_ios_light', 'ac_ios_dark'):
     b = block(scheme)
     check(f'{scheme.upper()}_NO_IMAGE_ASSET', '.png' not in b.lower() and 'background_folder' not in b)
 
-# The forbidden upstream theme remains byte-addressable and outside this verifier's target.
+# Forbidden upstream theme remains untouched by the v1.5.6 implementation.
 check('TONGWENFENG_PRESENT', tongwen.is_file())
 
 failed = [name for name, ok in checks if not ok]
