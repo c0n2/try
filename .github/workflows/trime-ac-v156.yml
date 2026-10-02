@@ -171,7 +171,8 @@ jobs:
           ./gradlew :app:testDebugUnitTest \
             --tests com.osfans.trime.data.theme.ThemeLoaderTest \
             --tests com.osfans.trime.data.theme.ThemeDslExpanderTest \
-            --tests com.osfans.trime.data.theme.TextKeyboardTest
+            --tests com.osfans.trime.data.theme.TextKeyboardTest \
+            --tests com.osfans.trime.data.theme.ThemeGoldenTest
       - name: Re-verify Ctrl+P regression contract
         run: python3 harness/trime-ac-dualzone/verify_v152_session_maintenance.py trime
       - name: Full debug unit-test suite
