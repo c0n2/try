@@ -115,6 +115,19 @@ schemes = r'''  ac_ios_light:
 '''
 
 path.write_text(text.replace(anchor, schemes + anchor, 1), encoding='utf-8')
+
+# The shipped-theme golden intentionally tracks the exact number and identity of
+# built-in color schemes. Adding two schemes changes that public theme data, so
+# update the golden expectation and make it assert the new schemes themselves.
+golden = root / 'app/src/test/java/com/osfans/trime/data/theme/ThemeGoldenTest.kt'
+golden_text = golden.read_text(encoding='utf-8')
+old = '''                Then("color schemes and preset keys are decoded") {\n                    theme.presetColorSchemes.size shouldBe 37\n                    theme.presetKeys.size shouldBe 106\n                    val brightnessDown = theme.presetKeys.getValue("BRIGHTNESS_DOWN")\n                    brightnessDown.label shouldBe "亮度-"\n                    brightnessDown.send shouldBe "BRIGHTNESS_DOWN"\n                }\n'''
+new = '''                Then("color schemes and preset keys are decoded") {\n                    theme.presetColorSchemes.size shouldBe 39\n                    theme.presetColorSchemes shouldContainKey "ac_ios_light"\n                    theme.presetColorSchemes shouldContainKey "ac_ios_dark"\n                    val iosLight = theme.presetColorSchemes.getValue("ac_ios_light")\n                    iosLight["name"] shouldBe "AC iOS Light"\n                    iosLight["key_back_color"] shouldBe "0xffffff"\n                    val iosDark = theme.presetColorSchemes.getValue("ac_ios_dark")\n                    iosDark["name"] shouldBe "AC iOS Dark"\n                    iosDark["key_back_color"] shouldBe "0x3a3a3c"\n                    theme.presetKeys.size shouldBe 106\n                    val brightnessDown = theme.presetKeys.getValue("BRIGHTNESS_DOWN")\n                    brightnessDown.label shouldBe "亮度-"\n                    brightnessDown.send shouldBe "BRIGHTNESS_DOWN"\n                }\n'''
+if golden_text.count(old) != 1:
+    raise SystemExit(f'expected one ThemeGolden color-scheme assertion block, got {golden_text.count(old)}')
+golden.write_text(golden_text.replace(old, new, 1), encoding='utf-8')
+
 print('V156_IOS_COLOR_SCHEMES_APPLIED')
+print('V156_THEME_GOLDEN_UPDATED')
 print(f'V156_BASELINE_THEME_SNAPSHOT={baseline_snapshot}')
 print('V156_NO_PNG_ASSETS=PASS')
