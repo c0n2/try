@@ -1,0 +1,81 @@
+name: Trime AC v1.5.6 iOS Colors
+
+on:
+  push:
+    branches: [trime-ac-v156-ios-colors]
+    paths:
+      - 'trime-ac-dualzone/verify_v156_ios_colors.py'
+      - 'trime-ac-dualzone/apply_v156.py'
+      - '.github/workflows/trime-ac-v156.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
+  FROST_REF: 2a027a0affdadd43194e6b3dc12cfffdd1426379
+  FROST_CHARS_SHA256: c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92
+
+jobs:
+  red-theme:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: harness
+      - uses: actions/checkout@v7
+        with:
+          repository: osfans/trime
+          ref: ${{ env.TRIME_REF }}
+          submodules: recursive
+          fetch-depth: 0
+          path: trime
+      - name: Restore v1.5.4 application baseline
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v14-meta
+          python3 - <<'PY'
+          import hashlib, pathlib, urllib.request
+          ref = "2a027a0affdadd43194e6b3dc12cfffdd1426379"
+          url = f"https://raw.githubusercontent.com/gaboolic/rime-frost/{ref}/cn_dicts_wb/chars.dict.yaml"
+          data = urllib.request.urlopen(url, timeout=60).read()
+          got = hashlib.sha256(data).hexdigest()
+          expected = "c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92"
+          if got != expected:
+              raise SystemExit(f"Frost chars SHA mismatch: {got}")
+          pathlib.Path("frost-chars.dict.yaml").write_bytes(data)
+          PY
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase impl --frost-chars frost-chars.dict.yaml
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v15-post
+          python3 harness/trime-ac-dualzone/apply_v151.py trime
+          python3 harness/trime-ac-dualzone/apply_v152.py trime
+          python3 harness/trime-ac-dualzone/apply_v153.py trime
+          python3 harness/trime-ac-dualzone/apply_v154.py trime
+      - name: RED v1.5.6 iOS color contract
+        shell: bash
+        run: |
+          set +e
+          python3 harness/trime-ac-dualzone/verify_v156_ios_colors.py trime > red-v156.log 2>&1
+          rc=$?
+          set -e
+          cat red-v156.log
+          if [ "$rc" -eq 0 ]; then
+            echo 'Expected v1.5.4 baseline to fail v1.5.6 color contract' >&2
+            exit 1
+          fi
+          grep -F 'FAIL=IOS_LIGHT_EXISTS' red-v156.log
+          grep -F 'FAIL=IOS_DARK_EXISTS' red-v156.log
+          grep -F 'V156_IOS_COLOR_CONTRACT=FAIL:' red-v156.log
+          echo V156_IOS_COLOR_RED_PHASE_CONFIRMED
