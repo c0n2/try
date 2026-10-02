@@ -14,7 +14,9 @@ root = a.root
 theme = root / 'app/src/main/assets/shared/trime.yaml'
 tongwen = root / 'app/src/main/assets/shared/tongwenfeng.trime.yaml'
 text = theme.read_text(encoding='utf-8')
-baseline_text = a.baseline_theme.read_text(encoding='utf-8') if a.baseline_theme else None
+auto_baseline = root.parent / 'v156-pre-theme.yaml'
+baseline_path = a.baseline_theme or (auto_baseline if auto_baseline.is_file() else None)
+baseline_text = baseline_path.read_text(encoding='utf-8') if baseline_path else None
 
 checks = []
 def check(label, ok):
@@ -40,13 +42,16 @@ geometry_keys = [
     'keyboard_height_land',
 ]
 if baseline_text is not None:
+    check('AC_BASELINE_THEME_SNAPSHOT_FOUND', True)
     for key in geometry_keys:
         check(
             f'GEOMETRY_{key.upper()}_UNCHANGED',
             style_value(text, key) == style_value(baseline_text, key),
         )
 else:
-    # RED-only invocations can omit a baseline; still require geometry keys to exist.
+    # RED-only invocation: no v1.5.6 snapshot exists yet. Require the actual
+    # AC geometry keys to be present, then let missing iOS schemes drive RED.
+    check('AC_BASELINE_THEME_SNAPSHOT_FOUND', False)
     for key in geometry_keys:
         check(f'GEOMETRY_{key.upper()}_PRESENT', style_value(text, key) is not None)
 
@@ -89,7 +94,6 @@ def block(name):
         return ''
     body = []
     for line in lines[start + 1:]:
-        # Scheme children are indented four spaces. A blank line is part of block.
         if line == '' or line.startswith('    '):
             body.append(line)
             continue
@@ -113,10 +117,14 @@ for scheme in ('ac_ios_light', 'ac_ios_dark'):
     b = block(scheme)
     check(f'{scheme.upper()}_NO_IMAGE_ASSET', '.png' not in b.lower() and 'background_folder' not in b)
 
-# Forbidden upstream theme remains untouched by the v1.5.6 implementation.
 check('TONGWENFENG_PRESENT', tongwen.is_file())
 
 failed = [name for name, ok in checks if not ok]
+# In RED-only mode, absence of a baseline snapshot is informational; RED must
+# still be caused by the missing v1.5.6 schemes, not by geometry assumptions.
+if baseline_text is None:
+    failed = [x for x in failed if x != 'AC_BASELINE_THEME_SNAPSHOT_FOUND']
+
 if failed:
     print('V156_IOS_COLOR_CONTRACT=FAIL:' + ','.join(failed))
     sys.exit(1)
