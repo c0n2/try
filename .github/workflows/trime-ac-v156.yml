@@ -13,6 +13,8 @@ permissions:
   contents: read
 
 env:
+  CI_NAME: AC Trime v1.5.6 iOS Colors
+  BUILD_ABI: arm64-v8a
   TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
   FROST_REF: 2a027a0affdadd43194e6b3dc12cfffdd1426379
   FROST_CHARS_SHA256: c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92
@@ -145,7 +147,6 @@ jobs:
           git diff --check
           git diff > ../trime-ac-v1.5.6-ios-colors.patch
           git diff --name-only | tee ../v156-changed-files.txt
-          # The only v1.5.6 production file is the shared Trime theme YAML.
           git diff -- app/src/main/assets/shared/trime.yaml > ../v156-theme.diff
           if git diff --name-only | grep -F 'tongwenfeng.trime.yaml'; then exit 1; fi
           grep -F 'ac_ios_light:' app/src/main/assets/shared/trime.yaml
