@@ -16,6 +16,12 @@ anchor = '''  aqua:\n    name: 碧水／Aqua\n'''
 if text.count(anchor) != 1:
     raise SystemExit(f'expected exactly one aqua insertion anchor, got {text.count(anchor)}')
 
+# Verification-only snapshot outside the Trime repository. The GREEN verifier
+# compares geometry/style values against this actual AC baseline so v1.5.6 can
+# prove it changed colors only without assuming upstream's stock geometry.
+baseline_snapshot = root.parent / 'v156-pre-theme.yaml'
+baseline_snapshot.write_text(text, encoding='utf-8')
+
 schemes = r'''  ac_ios_light:
     name: AC iOS Light
     author: AC Trime
@@ -110,5 +116,5 @@ schemes = r'''  ac_ios_light:
 
 path.write_text(text.replace(anchor, schemes + anchor, 1), encoding='utf-8')
 print('V156_IOS_COLOR_SCHEMES_APPLIED')
-print('V156_LAYOUT_GEOMETRY_UNTOUCHED')
+print(f'V156_BASELINE_THEME_SNAPSHOT={baseline_snapshot}')
 print('V156_NO_PNG_ASSETS=PASS')
