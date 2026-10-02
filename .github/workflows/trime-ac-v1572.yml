@@ -1,0 +1,82 @@
+name: Trime AC v1.5.7.2 Hide Candidate Scrollbar
+
+on:
+  push:
+    branches: [trime-ac-v1572-hide-candidate-scrollbar]
+    paths:
+      - 'trime-ac-dualzone/verify_v1572_hide_candidate_scrollbar.py'
+      - 'trime-ac-dualzone/apply_v1572.py'
+      - '.github/workflows/trime-ac-v1572.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI_NAME: AC Trime v1.5.7.2 Hide Candidate Scrollbar
+  TRIME_REF: 75844aef84f3849c7f6dd49a52bb75c46200af44
+  FROST_REF: 2a027a0affdadd43194e6b3dc12cfffdd1426379
+  FROST_CHARS_SHA256: c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92
+
+jobs:
+  red-contract:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: harness
+      - uses: actions/checkout@v7
+        with:
+          repository: osfans/trime
+          ref: ${{ env.TRIME_REF }}
+          submodules: recursive
+          fetch-depth: 0
+          path: trime
+      - name: Restore v1.5.7.1 DEVICE-PASS baseline
+        shell: bash
+        run: |
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_patch.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_hotfix_471.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v13.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v131.py trime --phase impl
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v14.py trime --phase impl
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v14-meta
+          python3 - <<'PY'
+          import hashlib, pathlib, urllib.request
+          ref = '2a027a0affdadd43194e6b3dc12cfffdd1426379'
+          data = urllib.request.urlopen(f'https://raw.githubusercontent.com/gaboolic/rime-frost/{ref}/cn_dicts_wb/chars.dict.yaml', timeout=60).read()
+          if hashlib.sha256(data).hexdigest() != 'c2adeceb8b670d6e33798517a432b479bf657df312eae6b2be88cc1a7eb0ad92':
+              raise SystemExit('Frost chars SHA mismatch')
+          pathlib.Path('frost-chars.dict.yaml').write_bytes(data)
+          PY
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase tests
+          python3 harness/trime-ac-dualzone/apply_v15.py trime --phase impl --frost-chars frost-chars.dict.yaml
+          python3 harness/trime-ac-dualzone/repair_v15_build.py trime --phase v15-post
+          python3 harness/trime-ac-dualzone/apply_v151.py trime
+          python3 harness/trime-ac-dualzone/apply_v152.py trime
+          python3 harness/trime-ac-dualzone/apply_v153.py trime
+          python3 harness/trime-ac-dualzone/apply_v154.py trime
+          python3 harness/trime-ac-dualzone/apply_v156.py trime
+          python3 harness/trime-ac-dualzone/apply_v157.py trime
+          python3 harness/trime-ac-dualzone/apply_v1571.py trime
+      - name: Confirm v1.5.7.1 overflow fix remains present
+        run: python3 harness/trime-ac-dualzone/verify_v1571_candidate_overflow.py trime
+      - name: RED v1.5.7.2 scrollbar visibility contract
+        shell: bash
+        run: |
+          set +e
+          python3 harness/trime-ac-dualzone/verify_v1572_hide_candidate_scrollbar.py trime > red-v1572.log 2>&1
+          rc=$?
+          set -e
+          cat red-v1572.log
+          test "$rc" -ne 0
+          grep -F 'PASS=HORIZONTAL_CANDIDATE_SCROLL_RETAINED' red-v1572.log
+          grep -F 'PASS=CANDIDATE_FLEX_SHRINK_ZERO_RETAINED' red-v1572.log
+          grep -F 'FAIL=HORIZONTAL_SCROLLBAR_EXPLICITLY_DISABLED' red-v1572.log
+          grep -F 'V1572_HIDE_CANDIDATE_SCROLLBAR_CONTRACT=FAIL:HORIZONTAL_SCROLLBAR_EXPLICITLY_DISABLED' red-v1572.log
+          echo V1572_RED_PHASE_CONFIRMED
